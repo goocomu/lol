@@ -2,7 +2,7 @@
 # ---------------------------
 # The most dangerous DoS tool
 # ---------------------------
-# Author : goocomu
+# FULLY skidded, Credits to @jonskujonskuu on github
 
 import customtkinter as ctk
 import tkinter as tk
@@ -68,5 +68,4 @@ app.bind("<Escape>", stop_app)
 # Run the app
 app.mainloop()
 
-# FULLY skidded, Credits to @jonskujonskuu on github
 
