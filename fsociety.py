@@ -12,7 +12,7 @@ import random
 import re
 import time
 import socket
-import urllib3
+import urllib
 import requests
 
 logo = """ 
@@ -3383,3 +3383,4 @@ def setup():
 
 if __name__ == '__main__':
     setup()
+
