@@ -4,6 +4,8 @@
 # ---------------------------
 # AquaSec, V1
 # Author : @gooithey
+# HEAVILY skidded from saphyra.py
+
 
 import urllib.error
 import sys
@@ -3383,4 +3385,5 @@ def setup():
 
 if __name__ == '__main__':
     setup()
+
 
