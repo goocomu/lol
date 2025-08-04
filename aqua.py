@@ -1,6 +1,6 @@
 # ! ~>  AquaSec  <~ !
 # ---------------------------
-# The most dangerous DoS tool
+# The most "dangerous" DoS tool
 # ---------------------------
 # AquaSec, V1
 # Author : @gooithey
@@ -3385,5 +3385,6 @@ def setup():
 
 if __name__ == '__main__':
     setup()
+
 
 
